@@ -1,0 +1,105 @@
+#' Generate bivariate responses for all clusters and replicates
+#' Author: Emma Davies Smith, esmith at hsph.harvard.edu
+#' Date:   27JAN2025
+#' 
+#' @details
+#' Correlated ordinal responses generated using mean mapping procedure discussed
+#' by Kaiser, Trager, and Leisch (2011). i.e. by discretizing mv normal deviates.
+#' See: https://epub.ub.uni-muenchen.de/12157/1/kaiser-tr-94-ordinal.pdf
+#' 
+#' @param c Number of clusters per replicate
+#' @param n Number of subjects per cluster
+#' @param B Number of replicates
+#' @param R Desired correlation matrix
+#' @param Pi Event probability (1st endpoint)
+#' @param Mu Mean (2nd endpoint)
+#' @param Sigma Standard deviation (2nd endpoint)
+#'
+#' @return Dataframe with one bivariate record per row
+genResponse <- function(C, n, n_type, B, R, Pi, Mu, Sigma){
+  
+  # Adjustments for unequal sample size
+  if (n_type == 'Unequal'){
+    n_set <- n   # desired cluster size
+    n <- 4*n_set # generate more subjects than needed, then delete at random
+  }
+  
+  w12 <- R[1,2]
+  p11 <- R[1,3]
+  p22 <- R[2,4]
+  p12 <- R[1,4]
+  
+  # Calculate intermediate correlations
+  ip22=p22
+  
+  # Calculate biserial correlations
+  Q    <- qnorm(1-Pi)
+  iw12 <- w12 * sqrt(Pi * (1-Pi)) / dnorm(Q)
+  ip12 <- p12 * sqrt(Pi * (1-Pi)) / dnorm(Q)
+  
+  # Calculate tetrachoric correlations
+  ip11 <- phi2tetra(ph=p11, m=c(Pi, Pi))
+  
+  # Construct intermediate correlation matrix
+  iR <- getCorrelation(n, iw12, ip11, ip22, ip12)
+  
+  # Generate standard normal deviates according to intermediate correlation matrix
+  Z <- mvrnorm(n=B*C, mu=rep(0, 2*n), Sigma=iR)
+  
+  # Column pairs represent bivariate response for subject within cluster
+  # Need to separate into one row per subject
+  odd_ix   <- seq(1, ncol(Z), 2)
+  even_ix  <- seq(2, ncol(Z), 2)
+  
+  # Transform normal deviates to desired scale
+  X1 <- ifelse(Z[,odd_ix]>Q, 1,0)
+  X2 <- Sigma*Z[,even_ix]+Mu
+  
+  # Turn into vectors (in row-major order)
+  X1 <- unlist(as.list(t(X1)))
+  X2 <- unlist(as.list(t(X2)))
+  
+  # Combine into labeled data frame
+  tX <- data.frame(cbind(X1, X2))
+  tX$B <- rep(1:ceiling(nrow(tX)/(n*C)), each=(n*C))
+  tX$C <- rep(rep(1:C, each=n), B)
+  
+  # Add participant IDs
+  tX <- tX %>%
+    group_by(B, C) %>%
+    mutate(pid=1:n)
+  
+  if(n_type=='Unequal'){
+    # generate cluster size from truncated log-normal distribution
+    # cv = 0.65; mu = desired n
+    # n truncated below by 3 and above by 4*mu (rarely >=100)
+    mu <- n_set
+    var <- (mu*0.65)^2
+    mu_ln <- log(mu^2/sqrt(mu^2+var))
+    var_ln <- log(1+var/mu^2)
+    
+    # Generate number of subjects per cluster at random for each rep + cluster
+    keep <- expand.grid(B=1:B, C=1:C)
+    nkeep <- nrow(keep)
+    keep$n <- ceiling(
+      rlnormTrunc(n=nkeep, 
+                  meanlog=mu_ln, sdlog=sqrt(var_ln), 
+                  min=3, max=4*mu)
+    )
+    
+    # Randomly sample subject ids to retain (out of original 100)
+    keep <- keep %>%
+      group_by(B, C) %>%
+      mutate(pid=list(sample(1:(4*mu), size=n, replace=F))) %>% 
+      unnest(pid) %>%
+      dplyr::select(-n)
+    
+    # Return responses for sampled ids
+    keep <- keep %>% arrange(B, C, pid)
+    tX <- tX %>% inner_join(keep, by=c('B'='B', 'C'='C', 'pid'='pid'))
+  }
+  
+  
+  return(tX)
+  
+}
