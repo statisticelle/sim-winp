@@ -1,6 +1,6 @@
 # sim-winp
 R code to reproduce simulation study for:
-Generalized pairwise comparisons for cluster randomized trials using win fractions
+Davies Smith E, Choi YH, Jairath V, Zou G. Confidence Interval Estimation for the Win Probability in Cluster Randomized Trials with Hierarchical Composite Endpoints Using Win Fractions. Clin Trials. In press. 
 
 Steps for running the simulation study are as follows:
 1. scenarios.R - Input parameter values of interest and generate all scenarios for data generation/investigation. Save to scenarios.csv. 
